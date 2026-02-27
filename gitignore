@@ -1,0 +1,50 @@
+# API Keys and credentials - NEVER commit these
+.env
+*.key
+credentials.json
+token.json
+client_secret*.json
+oauth2*.json
+service_account*.json
+
+# n8n local data
+.n8n/
+n8n-data/
+
+# Local storage paths (your downloaded study files)
+study-materials/
+local-storage/
+downloads/
+
+# Obsidian vault (personal notes - keep private)
+obsidian-vault/
+*.obsidian/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
+
+# Node modules (if any scripts added later)
+node_modules/
+npm-debug.log*
+
+# Python (if any helper scripts added)
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.env/

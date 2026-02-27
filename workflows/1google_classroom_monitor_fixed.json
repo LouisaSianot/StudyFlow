@@ -1,0 +1,219 @@
+{
+  "name": "1. Google Classroom Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://classroom.googleapis.com/v1/courses",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "name": "Get Classroom Courses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "1",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract courses from response\nconst courses = $input.first().json.courses || [];\n\n// Transform to individual items\nreturn courses.map(course => ({\n  json: {\n    courseId: course.id,\n    courseName: course.name,\n    courseCode: course.section || course.name,\n    enrollmentCode: course.enrollmentCode,\n    courseState: course.courseState,\n    updateTime: course.updateTime\n  }\n}));"
+      },
+      "name": "Process Courses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Loop Through Courses",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://classroom.googleapis.com/v1/courses/{{ $json[\"courseId\"] }}/courseWork",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "name": "Get Course Materials",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "1",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get materials\nconst materials = $input.first().json.courseWork || [];\nconst courseId = $('Loop Through Courses').first().json.courseId;\nconst courseName = $('Loop Through Courses').first().json.courseName;\n\n// Filter for new materials only (last 7 days)\nconst lastCheck = new Date();\nlastCheck.setDate(lastCheck.getDate() - 7);\n\nconst newMaterials = materials.filter(material => {\n  const updateTime = new Date(material.updateTime);\n  return updateTime > lastCheck;\n});\n\n// Transform materials\nreturn newMaterials.map(material => ({\n  json: {\n    courseId: courseId,\n    courseName: courseName,\n    materialId: material.id,\n    title: material.title,\n    description: material.description,\n    workType: material.workType,\n    state: material.state,\n    creationTime: material.creationTime,\n    updateTime: material.updateTime,\n    dueDate: material.dueDate,\n    maxPoints: material.maxPoints,\n    materials: material.materials || [],\n    attachments: material.materials?.filter(m => m.driveFile) || []\n  }\n}));"
+      },
+      "name": "Filter New Materials",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json[\"attachments\"].length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Has Attachments?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop through attachments and prepare download tasks\nconst item = $input.first().json;\nconst attachments = item.attachments || [];\n\nconst downloadTasks = [];\n\nfor (const attachment of attachments) {\n  if (attachment.driveFile && attachment.driveFile.driveFile) {\n    const file = attachment.driveFile.driveFile;\n    downloadTasks.push({\n      json: {\n        ...item,\n        fileId: file.id,\n        fileName: file.title,\n        fileUrl: file.alternateLink,\n        mimeType: file.mimeType\n      }\n    });\n  }\n}\n\nreturn downloadTasks;"
+      },
+      "name": "Prepare Download Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {},
+      "name": "No Attachments",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1650, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Classroom Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Classroom Courses": {
+      "main": [
+        [
+          {
+            "node": "Process Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Courses": {
+      "main": [
+        [
+          {
+            "node": "Loop Through Courses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Through Courses": {
+      "main": [
+        [
+          {
+            "node": "Get Course Materials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Course Materials": {
+      "main": [
+        [
+          {
+            "node": "Filter New Materials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Materials": {
+      "main": [
+        [
+          {
+            "node": "Has Attachments?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Attachments?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Download Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

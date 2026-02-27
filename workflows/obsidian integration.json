@@ -1,0 +1,148 @@
+{
+  "name": "3. Obsidian Integration",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "={{ $env.OBSIDIAN_VAULT_PATH }}",
+        "event": "file.added",
+        "watchPath": true,
+        "options": {
+          "depth": 4
+        }
+      },
+      "name": "Watch Vault for New Notes",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json[\"fileName\"] }}",
+              "rightValue": "\\.md$",
+              "operator": { "type": "string", "operation": "regex" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Only Markdown Files",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst filePath = item.path;\n\nlet content = '';\ntry {\n  content = fs.readFileSync(filePath, 'utf8');\n} catch (e) {\n  // Wait briefly and retry once (file may still be writing)\n  await new Promise(r => setTimeout(r, 500));\n  content = fs.readFileSync(filePath, 'utf8');\n}\n\n// Parse frontmatter\nconst frontmatterMatch = content.match(/^---\\n([\\s\\S]*?)\\n---/);\nlet frontmatter = {};\nif (frontmatterMatch) {\n  const lines = frontmatterMatch[1].split('\\n');\n  for (const line of lines) {\n    const [key, ...val] = line.split(':');\n    if (key && val.length) {\n      frontmatter[key.trim()] = val.join(':').trim().replace(/^\"|\"$/g, '');\n    }\n  }\n}\n\nreturn [{\n  json: {\n    ...item,\n    fileContent: content,\n    frontmatter: frontmatter,\n    courseName: frontmatter.course || path.basename(path.dirname(filePath)),\n    noteType: frontmatter.type || 'general',\n    noteDate: frontmatter.date || new Date().toISOString().split('T')[0]\n  }\n}];"
+      },
+      "name": "Read Note Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "leftValue": "={{ $json[\"frontmatter\"][\"tags\"] || '' }}",
+              "rightValue": "ai-generated",
+              "operator": { "type": "string", "operation": "contains" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Is AI Generated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst vaultPath = process.env.OBSIDIAN_VAULT_PATH;\nconst courseName = item.courseName;\nconst fileName = item.fileName.replace('.md', '');\n\n// Path to the course MOC (Map of Content) index file\nconst mocPath = path.join(vaultPath, courseName, `${courseName} - Index.md`);\n\nlet mocContent = '';\nlet mocExists = false;\n\ntry {\n  mocContent = fs.readFileSync(mocPath, 'utf8');\n  mocExists = true;\n} catch (e) {\n  // MOC doesn't exist yet, create it\n  mocContent = `---\\ntype: moc\\ncourse: \"${courseName}\"\\ncreated: ${new Date().toISOString().split('T')[0]}\\ntags: [${courseName}, moc, index]\\n---\\n\\n# ${courseName} - Course Index\\n\\n## 📚 Notes\\n\\n## 📝 Lecture Notes\\n\\n## 📋 Assignments\\n\\n## 🧪 Tutorials\\n`;\n}\n\n// Check if note is already linked\nconst noteLink = `[[${fileName}]]`;\nconst alreadyLinked = mocContent.includes(noteLink);\n\nlet updatedMoc = mocContent;\nif (!alreadyLinked) {\n  const noteType = item.noteType || 'general';\n  let section = '## 📚 Notes';\n  if (noteType.includes('lecture')) section = '## 📝 Lecture Notes';\n  else if (noteType.includes('assignment')) section = '## 📋 Assignments';\n  else if (noteType.includes('tutorial')) section = '## 🧪 Tutorials';\n\n  const insertLine = `- ${noteLink} - ${item.noteDate || new Date().toISOString().split('T')[0]}`;\n  updatedMoc = mocContent.replace(section, `${section}\\n${insertLine}`);\n}\n\nfs.writeFileSync(mocPath, updatedMoc, 'utf8');\n\nreturn [{\n  json: {\n    ...item,\n    mocPath: mocPath,\n    mocUpdated: !alreadyLinked,\n    mocCreated: !mocExists\n  }\n}];"
+      },
+      "name": "Update Course Index (MOC)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst vaultPath = process.env.OBSIDIAN_VAULT_PATH;\nconst today = new Date().toISOString().split('T')[0];\nconst fileName = item.fileName.replace('.md', '');\n\n// Path to daily note\nconst dailyNotePath = path.join(vaultPath, 'Daily Notes', `${today}.md`);\n\nlet dailyContent = '';\ntry {\n  dailyContent = fs.readFileSync(dailyNotePath, 'utf8');\n} catch (e) {\n  // Create daily note if it doesn't exist\n  dailyContent = `---\\ndate: ${today}\\ntype: daily-note\\ntags: [daily]\\n---\\n\\n# ${today}\\n\\n## 📥 New Materials Today\\n\\n## ✅ Tasks\\n\\n## 📓 Notes\\n\\n## 🔗 Links\\n`;\n}\n\n// Add entry to daily note under New Materials\nconst newEntry = `- [[${fileName}]] (${item.courseName || 'Unknown Course'})`;\nif (!dailyContent.includes(newEntry)) {\n  dailyContent = dailyContent.replace(\n    '## 📥 New Materials Today',\n    `## 📥 New Materials Today\\n${newEntry}`\n  );\n}\n\n// Ensure directory exists\nconst dailyDir = path.dirname(dailyNotePath);\nif (!fs.existsSync(dailyDir)) fs.mkdirSync(dailyDir, { recursive: true });\n\nfs.writeFileSync(dailyNotePath, dailyContent, 'utf8');\n\nreturn [{\n  json: {\n    ...item,\n    dailyNotePath: dailyNotePath,\n    dailyNoteUpdated: true\n  }\n}];"
+      },
+      "name": "Update Daily Note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst vaultPath = process.env.OBSIDIAN_VAULT_PATH;\n\n// Update a master graph/dashboard file\nconst dashboardPath = path.join(vaultPath, 'Dashboard.md');\n\nlet dashboard = '';\ntry {\n  dashboard = fs.readFileSync(dashboardPath, 'utf8');\n} catch (e) {\n  dashboard = `---\\ntype: dashboard\\ntags: [dashboard, home]\\n---\\n\\n# 🎓 Study Dashboard\\n\\n## 📊 Stats\\n- **Total Notes**: 0\\n- **Last Updated**: never\\n\\n## 📚 Courses\\n\\n## 🗓️ Recent Activity\\n`;\n}\n\n// Update last updated timestamp\nconst now = new Date();\nconst ts = now.toISOString().replace('T', ' ').slice(0, 16);\ndashboard = dashboard.replace(/\\*\\*Last Updated\\*\\*: .*/,  `**Last Updated**: ${ts}`);\n\n// Increment note count\nconst countMatch = dashboard.match(/\\*\\*Total Notes\\*\\*: (\\d+)/);\nif (countMatch) {\n  const newCount = parseInt(countMatch[1]) + 1;\n  dashboard = dashboard.replace(/\\*\\*Total Notes\\*\\*: \\d+/, `**Total Notes**: ${newCount}`);\n}\n\n// Add course if not already listed\nconst courseName = item.courseName || 'Unknown';\nif (!dashboard.includes(`[[${courseName} - Index]]`)) {\n  dashboard = dashboard.replace(\n    '## 📚 Courses',\n    `## 📚 Courses\\n- [[${courseName} - Index]]`\n  );\n}\n\n// Add to recent activity\nconst fileName = item.fileName.replace('.md', '');\nconst recentEntry = `- ${ts} → [[${fileName}]] (${courseName})`;\ndashboard = dashboard.replace(\n  '## 🗓️ Recent Activity',\n  `## 🗓️ Recent Activity\\n${recentEntry}`\n);\n\nfs.writeFileSync(dashboardPath, dashboard, 'utf8');\n\nreturn [{\n  json: {\n    ...item,\n    dashboardUpdated: true,\n    integrationComplete: true\n  }\n}];"
+      },
+      "name": "Update Dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 100]
+    },
+    {
+      "parameters": {},
+      "name": "Skip Non-AI Notes",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1050, 350]
+    },
+    {
+      "parameters": {},
+      "name": "Skip Non-Markdown",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [650, 400]
+    }
+  ],
+  "connections": {
+    "Watch Vault for New Notes": {
+      "main": [
+        [{ "node": "Only Markdown Files", "type": "main", "index": 0 }]
+      ]
+    },
+    "Only Markdown Files": {
+      "main": [
+        [{ "node": "Read Note Content", "type": "main", "index": 0 }],
+        [{ "node": "Skip Non-Markdown", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Note Content": {
+      "main": [
+        [{ "node": "Is AI Generated?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is AI Generated?": {
+      "main": [
+        [{ "node": "Update Course Index (MOC)", "type": "main", "index": 0 }],
+        [{ "node": "Skip Non-AI Notes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Course Index (MOC)": {
+      "main": [
+        [{ "node": "Update Daily Note", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Daily Note": {
+      "main": [
+        [{ "node": "Update Dashboard", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

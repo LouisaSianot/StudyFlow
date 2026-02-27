@@ -1,0 +1,238 @@
+{
+  "name": "4. Task Tracking",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger (6h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://classroom.googleapis.com/v1/courses",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "name": "Get All Courses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [450, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "1",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const courses = $input.first().json.courses || [];\n// Only return active courses\nreturn courses\n  .filter(c => c.courseState === 'ACTIVE')\n  .map(course => ({\n    json: {\n      courseId: course.id,\n      courseName: course.name,\n      courseSection: course.section || ''\n    }\n  }));"
+      },
+      "name": "Filter Active Courses",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Loop Courses",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://classroom.googleapis.com/v1/courses/{{ $json[\"courseId\"] }}/courseWork?courseWorkStates=PUBLISHED",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "name": "Get Course Assignments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 300],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "1",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://classroom.googleapis.com/v1/courses/{{ $('Loop Courses').first().json[\"courseId\"] }}/students/me/submissions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "name": "Get My Submissions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 480],
+      "credentials": {
+        "oAuth2Api": {
+          "id": "1",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge assignments with submission statuses\nconst courseWork = $('Get Course Assignments').first().json.courseWork || [];\nconst submissions = $('Get My Submissions').first().json.studentSubmissions || [];\nconst courseInfo = $('Loop Courses').first().json;\n\n// Build submission map: courseWorkId -> state\nconst submissionMap = {};\nfor (const sub of submissions) {\n  submissionMap[sub.courseWorkId] = {\n    state: sub.state,\n    late: sub.late || false,\n    assignedGrade: sub.assignedGrade || null,\n    draftGrade: sub.draftGrade || null\n  };\n}\n\nconst now = new Date();\n\nconst tasks = courseWork.map(work => {\n  const sub = submissionMap[work.id] || {};\n  \n  // Build due date\n  let dueDate = null;\n  let daysUntilDue = null;\n  let urgency = 'none';\n  \n  if (work.dueDate) {\n    const d = work.dueDate;\n    const t = work.dueTime || { hours: 23, minutes: 59 };\n    dueDate = new Date(d.year, d.month - 1, d.day, t.hours || 23, t.minutes || 59);\n    daysUntilDue = Math.ceil((dueDate - now) / (1000 * 60 * 60 * 24));\n    \n    if (daysUntilDue < 0) urgency = 'overdue';\n    else if (daysUntilDue <= 1) urgency = 'critical';\n    else if (daysUntilDue <= 3) urgency = 'high';\n    else if (daysUntilDue <= 7) urgency = 'medium';\n    else urgency = 'low';\n  }\n  \n  // Submission state mapping\n  const stateMap = {\n    'TURNED_IN': '✅ Submitted',\n    'RETURNED': '📬 Returned',\n    'CREATED': '📝 Not started',\n    'RECLAIMED_BY_STUDENT': '↩️ Reclaimed'\n  };\n  \n  return {\n    courseId: courseInfo.courseId,\n    courseName: courseInfo.courseName,\n    workId: work.id,\n    title: work.title,\n    description: (work.description || '').slice(0, 200),\n    workType: work.workType,\n    maxPoints: work.maxPoints || null,\n    dueDate: dueDate ? dueDate.toISOString() : null,\n    dueDateFormatted: dueDate ? dueDate.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : 'No due date',\n    daysUntilDue: daysUntilDue,\n    urgency: urgency,\n    submissionState: stateMap[sub.state] || '❓ Unknown',\n    rawState: sub.state || 'UNKNOWN',\n    isLate: sub.late || false,\n    grade: sub.assignedGrade || sub.draftGrade || null,\n    isComplete: ['TURNED_IN', 'RETURNED'].includes(sub.state)\n  };\n});\n\n// Sort by urgency then due date\nconst urgencyOrder = { overdue: 0, critical: 1, high: 2, medium: 3, low: 4, none: 5 };\ntasks.sort((a, b) => {\n  const uDiff = (urgencyOrder[a.urgency] || 5) - (urgencyOrder[b.urgency] || 5);\n  if (uDiff !== 0) return uDiff;\n  if (a.dueDate && b.dueDate) return new Date(a.dueDate) - new Date(b.dueDate);\n  return 0;\n});\n\nreturn tasks.map(t => ({ json: t }));"
+      },
+      "name": "Build Task List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 390]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aggregate all tasks and generate Obsidian markdown\nconst allTasks = $input.all().map(i => i.json);\nconst now = new Date();\nconst dateStr = now.toISOString().split('T')[0];\nconst ts = now.toISOString().replace('T', ' ').slice(0, 16);\n\n// Group by course\nconst byCourse = {};\nfor (const task of allTasks) {\n  if (!byCourse[task.courseName]) byCourse[task.courseName] = [];\n  byCourse[task.courseName].push(task);\n}\n\n// Urgency emoji\nconst urgencyEmoji = {\n  overdue: '🔴',\n  critical: '🟠',\n  high: '🟡',\n  medium: '🔵',\n  low: '🟢',\n  none: '⚪'\n};\n\n// Build pending tasks section\nconst pendingTasks = allTasks.filter(t => !t.isComplete && t.dueDate);\nconst completedTasks = allTasks.filter(t => t.isComplete);\n\nlet pendingSection = '';\nfor (const task of pendingTasks) {\n  const emoji = urgencyEmoji[task.urgency] || '⚪';\n  const dueInfo = task.daysUntilDue !== null\n    ? (task.daysUntilDue < 0 ? `⚠️ ${Math.abs(task.daysUntilDue)}d overdue` : `${task.daysUntilDue}d left`)\n    : 'No due date';\n  pendingSection += `- [ ] ${emoji} **${task.title}** | ${task.courseName} | 📅 ${task.dueDateFormatted} (${dueInfo}) | ${task.submissionState}\\n`;\n}\n\n// Build by-course section\nlet courseSections = '';\nfor (const [course, tasks] of Object.entries(byCourse)) {\n  courseSections += `\\n### ${course}\\n\\n`;\n  for (const task of tasks) {\n    const emoji = urgencyEmoji[task.urgency] || '⚪';\n    const checkbox = task.isComplete ? '[x]' : '[ ]';\n    const gradeStr = task.grade !== null ? ` | Grade: ${task.grade}/${task.maxPoints}` : '';\n    courseSections += `- ${checkbox} ${emoji} **${task.title}**\\n`;\n    courseSections += `  - Due: ${task.dueDateFormatted}\\n`;\n    courseSections += `  - Status: ${task.submissionState}${gradeStr}\\n`;\n    if (task.description) courseSections += `  - ${task.description.slice(0, 100)}${task.description.length > 100 ? '...' : ''}\\n`;\n    courseSections += `\\n`;\n  }\n}\n\n// Stats\nconst total = allTasks.length;\nconst complete = completedTasks.length;\nconst overdue = allTasks.filter(t => t.urgency === 'overdue' && !t.isComplete).length;\nconst dueThisWeek = allTasks.filter(t => t.daysUntilDue !== null && t.daysUntilDue <= 7 && t.daysUntilDue >= 0 && !t.isComplete).length;\n\nconst markdown = `---\ntype: task-tracker\ndate: ${dateStr}\nlast_updated: \"${ts}\"\ntags: [tasks, tracker, assignments]\n---\n\n# 📋 Assignment Tracker\n\n> Last updated: ${ts}\n\n## 📊 Summary\n\n| Metric | Count |\n|--------|-------|\n| Total Assignments | ${total} |\n| Completed | ${complete} |\n| Pending | ${total - complete} |\n| Overdue | ${overdue} |\n| Due This Week | ${dueThisWeek} |\n| Completion Rate | ${total > 0 ? Math.round((complete / total) * 100) : 0}% |\n\n## 🚨 Pending Assignments\n\n${pendingSection || '_No pending assignments! 🎉_'}\n\n## 📚 By Course\n${courseSections}\n\n## ✅ Completed\n\n${completedTasks.map(t => `- [x] **${t.title}** | ${t.courseName} | ${t.submissionState}${t.grade !== null ? ` | ${t.grade}/${t.maxPoints}pts` : ''}`).join('\\n') || '_Nothing completed yet_'}\n\n---\n*Auto-generated by n8n Task Tracking workflow*\n*Powered by Google Classroom API*\n`;\n\nreturn [{\n  json: {\n    markdownContent: markdown,\n    stats: { total, complete, overdue, dueThisWeek },\n    generatedAt: ts\n  }\n}];"
+      },
+      "name": "Generate Task Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1550, 300]
+    },
+    {
+      "parameters": {
+        "fileName": "={{ $env.OBSIDIAN_VAULT_PATH }}/Assignment Tracker.md",
+        "dataPropertyName": "markdownContent",
+        "options": {}
+      },
+      "name": "Save to Obsidian",
+      "type": "n8n-nodes-base.writeFile",
+      "typeVersion": 1,
+      "position": [1750, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check for urgent/overdue tasks and prepare notification payload\nconst data = $input.first().json;\nconst stats = data.stats;\n\nconst shouldNotify = stats.overdue > 0 || stats.dueThisWeek > 0;\n\nif (!shouldNotify) {\n  return [{ json: { notified: false, reason: 'No urgent tasks' } }];\n}\n\nlet message = '📚 Study Automation - Task Alert\\n\\n';\nif (stats.overdue > 0) message += `🔴 ${stats.overdue} overdue assignment(s)!\\n`;\nif (stats.dueThisWeek > 0) message += `🟡 ${stats.dueThisWeek} assignment(s) due this week\\n`;\nmessage += `\\nCheck your Assignment Tracker in Obsidian.`;\n\nreturn [{\n  json: {\n    notified: true,\n    message: message,\n    stats: stats\n  }\n}];"
+      },
+      "name": "Check Urgent Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1950, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json[\"notified\"] }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Has Urgent Tasks?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2150, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WEBHOOK_NOTIFICATION_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json[\"message\"]) }},\n  \"stats\": {{ JSON.stringify($json[\"stats\"]) }}\n}",
+        "options": {}
+      },
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2350, 200]
+    },
+    {
+      "parameters": {},
+      "name": "No Notification Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2350, 400]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (6h)": {
+      "main": [
+        [{ "node": "Get All Courses", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get All Courses": {
+      "main": [
+        [{ "node": "Filter Active Courses", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Active Courses": {
+      "main": [
+        [{ "node": "Loop Courses", "type": "main", "index": 0 }]
+      ]
+    },
+    "Loop Courses": {
+      "main": [
+        [
+          { "node": "Get Course Assignments", "type": "main", "index": 0 },
+          { "node": "Get My Submissions", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Course Assignments": {
+      "main": [
+        [{ "node": "Build Task List", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get My Submissions": {
+      "main": [
+        [{ "node": "Build Task List", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Task List": {
+      "main": [
+        [{ "node": "Generate Task Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Task Report": {
+      "main": [
+        [{ "node": "Save to Obsidian", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save to Obsidian": {
+      "main": [
+        [{ "node": "Check Urgent Tasks", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Urgent Tasks": {
+      "main": [
+        [{ "node": "Has Urgent Tasks?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Urgent Tasks?": {
+      "main": [
+        [{ "node": "Send Notification", "type": "main", "index": 0 }],
+        [{ "node": "No Notification Needed", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}

@@ -1,0 +1,272 @@
+{
+  "name": "2. AI Content Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "={{$env.LOCAL_STORAGE_PATH}}",
+        "event": "file.added",
+        "watchPath": true,
+        "options": {
+          "depth": 3
+        }
+      },
+      "name": "Watch for New Files",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"fileName\"]}}",
+              "operation": "regex",
+              "value2": "\\.(pdf|docx|pptx|txt)$"
+            }
+          ]
+        }
+      },
+      "name": "Filter File Types",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const fs = require('fs');\nconst path = require('path');\n\nconst filePath = items[0].json.path;\nconst fileName = items[0].json.fileName;\nconst fileExt = path.extname(fileName).toLowerCase();\n\nlet textContent = '';\n\nif (fileExt === '.txt') {\n  // Simple text file\n  textContent = fs.readFileSync(filePath, 'utf8');\n} else if (fileExt === '.pdf') {\n  // For PDF, we'll use a simple extraction\n  // Note: In production, use pdf-parse library\n  textContent = `[PDF content from ${fileName}]`;\n  // TODO: Implement actual PDF parsing\n} else if (fileExt === '.docx') {\n  // For DOCX, would use mammoth library\n  textContent = `[DOCX content from ${fileName}]`;\n  // TODO: Implement actual DOCX parsing\n} else if (fileExt === '.pptx') {\n  // For PPTX, would use appropriate library\n  textContent = `[PPTX content from ${fileName}]`;\n  // TODO: Implement actual PPTX parsing\n}\n\nreturn [{\n  json: {\n    ...items[0].json,\n    textContent: textContent,\n    fileType: fileExt.replace('.', '')\n  }\n}];"
+      },
+      "name": "Extract Text Content",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json[\"fileName\"]}}",
+                    "operation": "contains",
+                    "value2": "lecture"
+                  }
+                ]
+              },
+              "renameOutput": "Lecture Notes"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json[\"fileName\"]}}",
+                    "operation": "contains",
+                    "value2": "assignment"
+                  }
+                ]
+              },
+              "renameOutput": "Assignment"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{$json[\"fileName\"]}}",
+                    "operation": "contains",
+                    "value2": "tutorial"
+                  }
+                ]
+              },
+              "renameOutput": "Tutorial"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "other"
+        }
+      },
+      "name": "Classify Content Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare Claude API request for lecture notes\nconst textContent = items[0].json.textContent;\nconst fileName = items[0].json.fileName;\n\nconst prompt = `Based on this lecture content, please create:\n\n1. A comprehensive summary (300-500 words) that captures the main points and key takeaways\n2. 10 review questions with detailed answers to test understanding\n3. 15 flashcards in the format \"Q: [question] | A: [answer]\"\n4. Key concepts and their relationships (as a list)\n5. Suggested related topics to explore\n\nLecture Content:\n${textContent}\n\nPlease structure your response with clear headers for each section.`;\n\nreturn [{\n  json: {\n    ...items[0].json,\n    claudePrompt: prompt,\n    contentType: 'lecture'\n  }\n}];"
+      },
+      "name": "Prepare Lecture Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1050, 100]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare Claude API request for assignments\nconst textContent = items[0].json.textContent;\nconst fileName = items[0].json.fileName;\n\nconst prompt = `Based on this assignment description, please create:\n\n1. A clear breakdown of requirements (bulleted list)\n2. A suggested approach/strategy to complete this assignment\n3. Key concepts/topics to review before starting\n4. A checklist of deliverables\n5. Common pitfalls to avoid\n\nAssignment Content:\n${textContent}`;\n\nreturn [{\n  json: {\n    ...items[0].json,\n    claudePrompt: prompt,\n    contentType: 'assignment'\n  }\n}];"
+      },
+      "name": "Prepare Assignment Prompt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "headerAuth",
+        "requestMethod": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$env.CLAUDE_API_KEY}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 4096,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{$json[\"claudePrompt\"]}}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "name": "Call Claude AI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse Claude's response and structure it\nconst response = items[0].json;\nconst content = response.content[0].text;\nconst originalData = items[0].json;\n\n// Simple parsing - in production, use more robust parsing\nconst sections = content.split('\\n\\n');\n\nreturn [{\n  json: {\n    ...originalData,\n    claudeResponse: content,\n    parsedResponse: {\n      summary: sections[0] || '',\n      questions: sections[1] || '',\n      flashcards: sections[2] || '',\n      concepts: sections[3] || '',\n      relatedTopics: sections[4] || ''\n    }\n  }\n}];"
+      },
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Format content for Obsidian markdown\nconst data = items[0].json;\nconst parsed = data.parsedResponse;\nconst now = new Date();\n\nconst markdown = `---\ntype: ${data.contentType}-notes\ncourse: \"${data.courseName || 'Unknown'}\"\ndate: ${now.toISOString().split('T')[0]}\nsource: ${data.fileName}\ntags: [${data.courseName || 'study'}, ${data.contentType}, ai-generated]\n---\n\n# ${data.fileName.replace(/\\.[^/.]+$/, '')}\n\n## 📝 Summary\n${parsed.summary}\n\n## ❓ Review Questions\n${parsed.questions}\n\n## 🎴 Flashcards\n${parsed.flashcards}\n\n## 🧠 Key Concepts\n${parsed.concepts}\n\n## 🔗 Related Topics\n${parsed.relatedTopics}\n\n## 📎 Original Material\n![[${data.fileName}]]\n\n---\n*Generated on: ${now.toISOString()}*\n*Powered by: Claude AI*\n`;\n\nreturn [{\n  json: {\n    ...data,\n    markdownContent: markdown,\n    noteName: data.fileName.replace(/\\.[^/.]+$/, '') + '.md'\n  }\n}];"
+      },
+      "name": "Format for Obsidian",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {},
+      "name": "Unsupported File Type",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [650, 400]
+    }
+  ],
+  "connections": {
+    "Watch for New Files": {
+      "main": [
+        [
+          {
+            "node": "Filter File Types",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter File Types": {
+      "main": [
+        [
+          {
+            "node": "Extract Text Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported File Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text Content": {
+      "main": [
+        [
+          {
+            "node": "Classify Content Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Content Type": {
+      "main": [
+        [
+          {
+            "node": "Prepare Lecture Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Assignment Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Lecture Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Claude AI API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Assignment Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Claude AI API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude AI API": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Format for Obsidian",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

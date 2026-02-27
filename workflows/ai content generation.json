@@ -1,0 +1,269 @@
+{
+  "name": "2. AI Content Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "={{ $env.LOCAL_STORAGE_PATH }}",
+        "event": "file.added",
+        "watchPath": true,
+        "options": {
+          "depth": 3
+        }
+      },
+      "name": "Watch for New Files",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json[\"fileName\"] }}",
+              "rightValue": "\\.(pdf|docx|pptx|txt)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Filter File Types",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst item = $input.first().json;\nconst filePath = item.path;\nconst fileName = item.fileName;\nconst fileExt = path.extname(fileName).toLowerCase();\n\nlet textContent = '';\n\nif (fileExt === '.txt') {\n  textContent = fs.readFileSync(filePath, 'utf8');\n} else if (fileExt === '.pdf') {\n  // TODO: Install pdf-parse via npm for full extraction\n  textContent = `[PDF content from ${fileName} - install pdf-parse for full extraction]`;\n} else if (fileExt === '.docx') {\n  // TODO: Install mammoth via npm for full extraction\n  textContent = `[DOCX content from ${fileName} - install mammoth for full extraction]`;\n} else if (fileExt === '.pptx') {\n  // TODO: Install pptx-parser for full extraction\n  textContent = `[PPTX content from ${fileName} - install pptx-parser for full extraction]`;\n}\n\nreturn [{\n  json: {\n    ...item,\n    textContent: textContent,\n    fileType: fileExt.replace('.', '')\n  }\n}];"
+      },
+      "name": "Extract Text Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json[\"fileName\"] }}",
+                    "rightValue": "lecture",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ]
+              },
+              "renameOutput": "Lecture Notes"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json[\"fileName\"] }}",
+                    "rightValue": "assignment",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ]
+              },
+              "renameOutput": "Assignment"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json[\"fileName\"] }}",
+                    "rightValue": "tutorial",
+                    "operator": { "type": "string", "operation": "contains" }
+                  }
+                ]
+              },
+              "renameOutput": "Tutorial"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "other"
+        }
+      },
+      "name": "Classify Content Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst textContent = item.textContent;\n\nconst prompt = `Based on this lecture content, please create:\n\n1. A comprehensive summary (300-500 words) that captures the main points and key takeaways\n2. 10 review questions with detailed answers to test understanding\n3. 15 flashcards in the format \"Q: [question] | A: [answer]\"\n4. Key concepts and their relationships (as a list)\n5. Suggested related topics to explore\n\nLecture Content:\n${textContent}\n\nPlease structure your response with clear headers for each section.`;\n\nreturn [{\n  json: {\n    ...item,\n    geminiPrompt: prompt,\n    contentType: 'lecture'\n  }\n}];"
+      },
+      "name": "Prepare Lecture Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst textContent = item.textContent;\n\nconst prompt = `Based on this assignment description, please create:\n\n1. A clear breakdown of requirements (bulleted list)\n2. A suggested approach/strategy to complete this assignment\n3. Key concepts/topics to review before starting\n4. A checklist of deliverables\n5. Common pitfalls to avoid\n\nAssignment Content:\n${textContent}`;\n\nreturn [{\n  json: {\n    ...item,\n    geminiPrompt: prompt,\n    contentType: 'assignment'\n  }\n}];"
+      },
+      "name": "Prepare Assignment Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst textContent = item.textContent;\n\nconst prompt = `Based on this tutorial content, please create:\n\n1. A step-by-step summary of the tutorial\n2. Key skills and techniques demonstrated\n3. 10 practice questions to reinforce learning\n4. Common mistakes to avoid\n5. Next steps for further learning\n\nTutorial Content:\n${textContent}`;\n\nreturn [{\n  json: {\n    ...item,\n    geminiPrompt: prompt,\n    contentType: 'tutorial'\n  }\n}];"
+      },
+      "name": "Prepare Tutorial Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst textContent = item.textContent;\n\nconst prompt = `Please analyse this study material and provide:\n\n1. A concise summary of the main content\n2. Key points and takeaways\n3. Review questions to test understanding\n4. Suggested study strategies for this material\n\nContent:\n${textContent}`;\n\nreturn [{\n  json: {\n    ...item,\n    geminiPrompt: prompt,\n    contentType: 'general'\n  }\n}];"
+      },
+      "name": "Prepare General Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"parts\": [\n        {\n          \"text\": {{ JSON.stringify($json[\"geminiPrompt\"]) }}\n        }\n      ]\n    }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.4,\n    \"maxOutputTokens\": 4096\n  }\n}",
+        "options": {}
+      },
+      "name": "Call Gemini API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini's response\nconst response = $input.first().json;\nconst originalData = $input.first().json;\n\n// Gemini response structure: candidates[0].content.parts[0].text\nconst content = response?.candidates?.[0]?.content?.parts?.[0]?.text || '';\n\nif (!content) {\n  throw new Error('Empty response from Gemini API. Check your API key and quota.');\n}\n\n// Split into rough sections by double newline\nconst sections = content.split(/\\n#{1,3} /).filter(s => s.trim());\n\nreturn [{\n  json: {\n    ...originalData,\n    geminiResponse: content,\n    parsedResponse: {\n      full: content,\n      summary: sections[0] || '',\n      questions: sections[1] || '',\n      flashcards: sections[2] || '',\n      concepts: sections[3] || '',\n      relatedTopics: sections[4] || ''\n    }\n  }\n}];"
+      },
+      "name": "Parse Gemini Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format content for Obsidian markdown\nconst data = $input.first().json;\nconst parsed = data.parsedResponse;\nconst now = new Date();\nconst dateStr = now.toISOString().split('T')[0];\n\nconst markdown = `---\ntype: ${data.contentType}-notes\ncourse: \"${data.courseName || 'Unknown'}\"\ndate: ${dateStr}\nsource: ${data.fileName}\ntags: [${data.courseName || 'study'}, ${data.contentType}, ai-generated, gemini]\n---\n\n# ${data.fileName.replace(/\\.[^/.]+$/, '')}\n\n## 📝 Summary\n${parsed.summary}\n\n## ❓ Review Questions\n${parsed.questions}\n\n## 🎴 Flashcards\n${parsed.flashcards}\n\n## 🧠 Key Concepts\n${parsed.concepts}\n\n## 🔗 Related Topics\n${parsed.relatedTopics}\n\n## 📎 Original Material\n![[${data.fileName}]]\n\n---\n*Generated on: ${now.toISOString()}*\n*Powered by: Google Gemini AI*\n`;\n\nconst safeName = data.fileName.replace(/\\.[^/.]+$/, '').replace(/[^a-zA-Z0-9 _-]/g, '_');\n\nreturn [{\n  json: {\n    ...data,\n    markdownContent: markdown,\n    noteName: safeName + '.md',\n    noteDate: dateStr\n  }\n}];"
+      },
+      "name": "Format for Obsidian",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "fileName": "={{ $env.OBSIDIAN_VAULT_PATH }}/{{ $json[\"courseName\"] || 'General' }}/{{ $json[\"noteName\"] }}",
+        "dataPropertyName": "markdownContent",
+        "options": {
+          "createDirectories": true
+        }
+      },
+      "name": "Save Note to Obsidian",
+      "type": "n8n-nodes-base.writeFile",
+      "typeVersion": 1,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {},
+      "name": "Unsupported File Type",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [650, 400]
+    }
+  ],
+  "connections": {
+    "Watch for New Files": {
+      "main": [
+        [{ "node": "Filter File Types", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter File Types": {
+      "main": [
+        [{ "node": "Extract Text Content", "type": "main", "index": 0 }],
+        [{ "node": "Unsupported File Type", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Text Content": {
+      "main": [
+        [{ "node": "Classify Content Type", "type": "main", "index": 0 }]
+      ]
+    },
+    "Classify Content Type": {
+      "main": [
+        [{ "node": "Prepare Lecture Prompt", "type": "main", "index": 0 }],
+        [{ "node": "Prepare Assignment Prompt", "type": "main", "index": 0 }],
+        [{ "node": "Prepare Tutorial Prompt", "type": "main", "index": 0 }],
+        [{ "node": "Prepare General Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Lecture Prompt": {
+      "main": [
+        [{ "node": "Call Gemini API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Assignment Prompt": {
+      "main": [
+        [{ "node": "Call Gemini API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Tutorial Prompt": {
+      "main": [
+        [{ "node": "Call Gemini API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare General Prompt": {
+      "main": [
+        [{ "node": "Call Gemini API", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call Gemini API": {
+      "main": [
+        [{ "node": "Parse Gemini Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Gemini Response": {
+      "main": [
+        [{ "node": "Format for Obsidian", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format for Obsidian": {
+      "main": [
+        [{ "node": "Save Note to Obsidian", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null
+}
